@@ -61,6 +61,27 @@ def main(argv: Optional[List[str]] = None) -> int:
     v.add_argument("--work-dir")
     v.add_argument("--read-attempts", type=int, default=3)
 
+    m = sub.add_parser(
+        "merge",
+        help="combine all backups into ONE deduplicated file per type (sms / calls)",
+    )
+    m.add_argument("inputs", nargs="+", help="backup files or folders (searched recursively)")
+    m.add_argument("--out-dir", required=True, help="where the merged file(s) are written")
+    m.add_argument("--tmp-dir", help="local temp dir for building the file (default: system temp)")
+    m.add_argument("--read-attempts", type=int, default=3)
+
+    vm = sub.add_parser(
+        "verify-merged",
+        help="re-read every source backup and prove each message is in the merged file",
+    )
+    vm.add_argument("inputs", nargs="+", help="the same inputs given to merge")
+    vm.add_argument("--out-dir", required=True, help="folder holding the *-merged.xml file(s)")
+    vm.add_argument("--read-attempts", type=int, default=3)
+    vm.add_argument(
+        "--move-sources-to",
+        help="only if VERIFIED: move all source backups into this folder, so you can delete one folder",
+    )
+
     i = sub.add_parser("inspect", help="print counts/date range for one backup file")
     i.add_argument("file")
 
@@ -69,6 +90,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.cmd == "inspect":
         cleanup.inspect(args.file)
         return 0
+    if args.cmd == "merge":
+        from .merge import merge
+
+        return 0 if merge(args.inputs, args.out_dir, tmp_dir=args.tmp_dir, attempts=args.read_attempts) else 1
+    if args.cmd == "verify-merged":
+        from .merge import verify_merged
+
+        ok = verify_merged(
+            args.inputs, args.out_dir, attempts=args.read_attempts, move_sources_to=args.move_sources_to
+        )
+        return 0 if ok else 1
 
     if not os.path.isdir(args.backup_dir):
         print("not a directory: %s" % args.backup_dir, file=sys.stderr)
