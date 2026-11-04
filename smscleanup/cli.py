@@ -53,6 +53,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--delete", action="store_true", help="delete instead of moving to <work-dir>/superseded")
     ap.add_argument("--yes", action="store_true", help="do not ask for confirmation")
 
+    v = sub.add_parser(
+        "verify",
+        help="after apply: re-read everything from disk and prove every removed message still exists",
+    )
+    v.add_argument("backup_dir")
+    v.add_argument("--work-dir")
+    v.add_argument("--read-attempts", type=int, default=3)
+
     i = sub.add_parser("inspect", help="print counts/date range for one backup file")
     i.add_argument("file")
 
@@ -84,6 +92,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     elif args.cmd == "report":
         state = cleanup.WorkDir(work_dir).load_state()
         print(cleanup.build_report(state))
+    elif args.cmd == "verify":
+        from .verify import verify
+
+        return 0 if verify(args.backup_dir, work_dir, attempts=args.read_attempts) else 1
     elif args.cmd == "apply":
         if not args.yes:
             ans = input(

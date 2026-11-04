@@ -17,8 +17,9 @@ deleted from the phone and now only exist in an old backup.
    It stops if the signed-in account doesn't own the folder: only the owner can
    free that storage, so pick the owner's account in **both** Google sign-in popups
    (Drive mount and the link lookup).
-3. Read the report, run `apply`, then delete the `superseded` folder and
-   **empty the Drive trash**.
+3. Read the report, run `apply` (it only *moves* files), run `verify`, and only
+   if it says **VERIFIED** delete the `superseded` folder and **empty the Drive
+   trash**.
 
 Nothing is downloaded to anyone's computer; Colab runs next to Drive in
 Google's cloud.
@@ -80,7 +81,15 @@ sms-…0302 (incremental)  sms-…0301 (full)  sms-…0201 (full)  sms-…0101 (
    * checks kept files are unchanged, then **moves** superseded files to
      `<backup_dir>-cleanup/superseded/` (a rename on Drive — no re-upload).
      `--delete` sends them straight to the Drive trash instead.
-3. **You** delete the `superseded` folder and empty the trash.
+3. **verify** — an independent second opinion that ignores everything
+   `analyze` decided. It re-reads from disk everything that *remains* (backup
+   folder + `recovered/`) and everything that was *moved* (`superseded/`), and
+   classifies every moved record as an exact copy that remains, the same
+   message with some details differing (listed by attribute, e.g. `read`,
+   `contact_name`), or **missing**. Missing records are written to
+   `verify-missing-*.xml` and the run ends NOT VERIFIED.
+4. **You** delete the `superseded` folder and empty the trash — only after
+   `verify` says VERIFIED.
 
 ### What counts as "the same message"
 
@@ -117,7 +126,8 @@ Python ≥ 3.8, standard library only.
 pip install git+https://github.com/LegitUnicorn/SMS-Cleanup.git
 smscleanup analyze /path/to/SMSBackupRestore          # read-only, resumable
 smscleanup report  /path/to/SMSBackupRestore
-smscleanup apply   /path/to/SMSBackupRestore          # asks for confirmation
+smscleanup apply   /path/to/SMSBackupRestore          # asks for confirmation; moves only
+smscleanup verify  /path/to/SMSBackupRestore          # independent re-read; exit 0 = VERIFIED
 smscleanup inspect /path/to/SMSBackupRestore/sms-20250831004537.xml
 ```
 
