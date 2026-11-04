@@ -34,6 +34,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     a.add_argument("--max-hours", type=float, help="stop starting new files after this many hours")
     a.add_argument("--extras-cap-mb", type=int, default=1024, help="local spool cap for unique records (default 1024)")
     a.add_argument("--tmp-dir", help="local temp dir for spooling (default: system temp)")
+    a.add_argument(
+        "--retry-errors",
+        action="store_true",
+        help="re-read files that failed with read errors in an earlier run",
+    )
+    a.add_argument(
+        "--read-attempts", type=int, default=3, help="tries per file when Drive returns an I/O error (default 3)"
+    )
 
     r = sub.add_parser("report", help="print the report from the last analyze")
     r.add_argument("backup_dir")
@@ -70,6 +78,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             max_hours=args.max_hours,
             extras_cap_mb=args.extras_cap_mb,
             tmp_dir=args.tmp_dir,
+            retry_errors=args.retry_errors,
+            read_attempts=args.read_attempts,
         )
     elif args.cmd == "report":
         state = cleanup.WorkDir(work_dir).load_state()

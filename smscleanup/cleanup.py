@@ -157,8 +157,11 @@ def analyze(
     max_hours: Optional[float] = None,
     extras_cap_mb: int = 1024,
     tmp_dir: Optional[str] = None,
+    retry_errors: bool = False,
+    read_attempts: int = 3,
 ) -> dict:
     wd = WorkDir(work_dir)
+    cap = extras_cap_mb * (1 << 20)
     if tmp_dir:
         os.makedirs(tmp_dir, exist_ok=True)
     state = wd.load_state()
@@ -183,6 +186,9 @@ def analyze(
                     "%s changed size since it was analyzed (%d -> %d). "
                     "Start over with an empty --work-dir." % (f.name, e["size"], f.size)
                 )
+        if retry_errors:
+            _retry_errored(group, gfiles, wd, state, keep_ratio, cap, tmp_dir, read_attempts)
+            done = {n: e for n, e in state["files"].items() if e["group"] == group}
         pending = [f for f in gfiles if f.name not in done]
         log(
             "[%s] %d files total, %d already analyzed, %d to go (%s)"
@@ -210,13 +216,82 @@ def analyze(
             if max_hours is not None and time.monotonic() - started > max_hours * 3600:
                 log("Reached --max-hours; stopping. Re-run to continue.")
                 return _finish(wd, state)
-            entry = _analyze_file(f, wd, seen, keep_ratio, extras_cap_mb * (1 << 20), tmp_dir)
+            entry = _analyze_with_retries(f, wd, seen, keep_ratio, cap, tmp_dir, read_attempts)
             entry["order"] = state["next_order"]
             state["next_order"] += 1
             state["files"][f.name] = entry
             wd.save_state(state)
             processed_now += 1
     return _finish(wd, state)
+
+
+def _analyze_with_retries(
+    f: BackupFile,
+    wd: WorkDir,
+    seen: Set[bytes],
+    keep_ratio: float,
+    extras_cap: int,
+    tmp_dir: Optional[str],
+    attempts: int,
+    retry_wait: float = 15.0,
+) -> dict:
+    """Re-read a file from scratch when Drive returns an I/O error mid-read.
+
+    ``seen`` is restored to its pre-attempt contents before each retry so a
+    failed attempt leaves no trace.
+    """
+    snapshot = set(seen)
+    for attempt in range(1, max(1, attempts) + 1):
+        entry = _analyze_file(f, wd, seen, keep_ratio, extras_cap, tmp_dir)
+        if not entry.get("io_error") or attempt >= attempts:
+            return entry
+        log("     read error; retrying %s (attempt %d of %d)" % (f.name, attempt + 1, attempts))
+        seen.clear()
+        seen.update(snapshot)
+        time.sleep(retry_wait)
+    return entry  # pragma: no cover
+
+
+def _retry_errored(
+    group: str,
+    gfiles: List[BackupFile],
+    wd: WorkDir,
+    state: dict,
+    keep_ratio: float,
+    extras_cap: int,
+    tmp_dir: Optional[str],
+    attempts: int,
+) -> None:
+    """Re-analyze files that previously failed to read, in their original place.
+
+    Each one is compared only against the files that were newer than it in the
+    original run, exactly as the first pass did.  Its new key set is a superset
+    of the partial one, so decisions already made for older files stay valid
+    (anything they relied on is either in a newer file or, if unique to this
+    one, goes to the recovered file).
+    """
+    by_name = {f.name: f for f in gfiles}
+    entries = sorted(
+        ((n, e) for n, e in state["files"].items() if e["group"] == group),
+        key=lambda kv: kv[1]["order"],
+    )
+    errored = [(n, e) for n, e in entries if e.get("error")]
+    if not errored:
+        return
+    log("[%s] retrying %d file(s) that had read errors" % (group, len(errored)))
+    for name, old in errored:
+        f = by_name.get(name)
+        if f is None:
+            log("  %s is no longer in the backup folder; skipping" % name)
+            continue
+        seen: Set[bytes] = set()
+        for n, e in entries:
+            if e["order"] < old["order"]:
+                seen |= read_keys(wd.keys_path(n))
+        entry = _analyze_with_retries(f, wd, seen, keep_ratio, extras_cap, tmp_dir, attempts)
+        entry["order"] = old["order"]
+        state["files"][name] = entry
+        wd.save_state(state)
 
 
 def _finish(wd: WorkDir, state: dict) -> dict:
@@ -244,6 +319,7 @@ def _analyze_file(
     unique_tags: Counter = Counter()
     total = 0
     error = None
+    io_error = False
     result = ParseResult()
 
     # Unique records are spooled to a *local* temp file while we stream, so
@@ -288,6 +364,7 @@ def _analyze_file(
         error = "XML parse error after %d records: %s" % (total, exc)
     except OSError as exc:
         error = "read error after %d records: %s" % (total, exc)
+        io_error = True
     finally:
         spool.close()
 
@@ -343,6 +420,7 @@ def _analyze_file(
         "decision": decision,
         "reason": reason,
         "error": error,
+        "io_error": io_error,
         "root_tag": result.root_tag,
         "seconds": round(dt, 1),
         "moved": False,
@@ -388,6 +466,14 @@ def build_report(state: dict) -> str:
             "| records rescued into recovered file | %d |" % sum(e["unique"] for e in sup),
             "| files with read errors (kept) | %d |" % sum(1 for _, e in entries if e["error"]),
             "",
+        ]
+        if any(e["error"] for _, e in entries):
+            lines += [
+                "> Files with read errors are kept. Drive I/O errors are usually transient: "
+                "re-run `analyze` with `--retry-errors` to re-read just those files.",
+                "",
+            ]
+        lines += [
             "| file | size | records | unique | decision | moved |",
             "|---|---:|---:|---:|---|---|",
         ]

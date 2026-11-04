@@ -100,6 +100,9 @@ and one doesn't), *both* are kept. The tool errs on the side of keeping data.
   (`&#55357;&#56832;`), which standard XML parsers reject. The reader repairs
   that on the fly; the recovered file is written back in the app's dialect.
 * **Truncated / corrupt uploads** are reported and left alone (never removed).
+  Drive `Input/output error`s mid-read are retried automatically (3 tries); if a
+  file still fails it is kept, and `analyze --retry-errors` re-reads just those
+  files later.
 * **Space is only freed after emptying the Drive trash.**
 * Make sure the app is now set to incremental / "only new messages" backups
   (or a sensible "keep last N backups" retention), otherwise the problem comes
