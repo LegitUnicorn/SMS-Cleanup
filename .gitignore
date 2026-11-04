@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+# never commit real backups or analysis output
+*.xml
+!tests/fixtures/*.xml
+*-cleanup/

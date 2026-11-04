@@ -1,0 +1,87 @@
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from typing import List, Optional
+
+from . import __version__, cleanup
+
+
+def _default_work_dir(backup_dir: str) -> str:
+    backup_dir = os.path.abspath(backup_dir.rstrip("/\\"))
+    return backup_dir + "-cleanup"
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    p = argparse.ArgumentParser(
+        prog="smscleanup",
+        description="Find and remove redundant full SMS/MMS/call-log backups without losing a single message.",
+    )
+    p.add_argument("--version", action="version", version=__version__)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    a = sub.add_parser("analyze", help="read every backup and decide what to keep (read-only for the backup folder)")
+    a.add_argument("backup_dir")
+    a.add_argument("--work-dir", help="where state/report/recovered files go (default: <backup_dir>-cleanup)")
+    a.add_argument(
+        "--keep-ratio",
+        type=float,
+        default=0.5,
+        help="keep a file if at least this fraction of its records are not in any newer file (default 0.5)",
+    )
+    a.add_argument("--max-files", type=int, help="stop after this many files (resume by re-running)")
+    a.add_argument("--max-hours", type=float, help="stop starting new files after this many hours")
+    a.add_argument("--extras-cap-mb", type=int, default=1024, help="local spool cap for unique records (default 1024)")
+    a.add_argument("--tmp-dir", help="local temp dir for spooling (default: system temp)")
+
+    r = sub.add_parser("report", help="print the report from the last analyze")
+    r.add_argument("backup_dir")
+    r.add_argument("--work-dir")
+
+    ap = sub.add_parser("apply", help="verify, write recovered file(s), then move superseded backups out")
+    ap.add_argument("backup_dir")
+    ap.add_argument("--work-dir")
+    ap.add_argument("--delete", action="store_true", help="delete instead of moving to <work-dir>/superseded")
+    ap.add_argument("--yes", action="store_true", help="do not ask for confirmation")
+
+    i = sub.add_parser("inspect", help="print counts/date range for one backup file")
+    i.add_argument("file")
+
+    args = p.parse_args(argv)
+
+    if args.cmd == "inspect":
+        cleanup.inspect(args.file)
+        return 0
+
+    if not os.path.isdir(args.backup_dir):
+        print("not a directory: %s" % args.backup_dir, file=sys.stderr)
+        return 2
+    work_dir = args.work_dir or _default_work_dir(args.backup_dir)
+
+    if args.cmd == "analyze":
+        if not 0 < args.keep_ratio <= 1:
+            p.error("--keep-ratio must be in (0, 1]")
+        cleanup.analyze(
+            args.backup_dir,
+            work_dir,
+            keep_ratio=args.keep_ratio,
+            max_files=args.max_files,
+            max_hours=args.max_hours,
+            extras_cap_mb=args.extras_cap_mb,
+            tmp_dir=args.tmp_dir,
+        )
+    elif args.cmd == "report":
+        state = cleanup.WorkDir(work_dir).load_state()
+        print(cleanup.build_report(state))
+    elif args.cmd == "apply":
+        if not args.yes:
+            ans = input(
+                "This will %s superseded backups from %s. Type 'yes' to continue: "
+                % ("DELETE" if args.delete else "move", args.backup_dir)
+            )
+            if ans.strip().lower() != "yes":
+                print("aborted")
+                return 1
+        cleanup.apply(args.backup_dir, work_dir, delete=args.delete)
+    return 0
