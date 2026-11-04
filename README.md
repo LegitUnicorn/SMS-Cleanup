@@ -11,7 +11,12 @@ deleted from the phone and now only exist in an old backup.
 1. Open [`notebooks/SMS_Cleanup_Colab.ipynb`](notebooks/SMS_Cleanup_Colab.ipynb)
    in Google Colab (*File → Open notebook → GitHub*), signed in to **the Google
    account that owns the backups**.
-2. Set `BACKUP_DIR` to the backup folder, run the cells.
+2. Set `BACKUP_DIR` to the backup folder — a path, or just paste the folder's
+   drive.google.com link — and run the cells. If the folder isn't where you said,
+   the notebook searches your Drive and lists the folders that hold backups.
+   It stops if the signed-in account doesn't own the folder: only the owner can
+   free that storage, so pick the owner's account in **both** Google sign-in popups
+   (Drive mount and the link lookup).
 3. Read the report, run `apply`, then delete the `superseded` folder and
    **empty the Drive trash**.
 
