@@ -17,9 +17,15 @@ deleted from the phone and now only exist in an old backup.
    It stops if the signed-in account doesn't own the folder: only the owner can
    free that storage, so pick the owner's account in **both** Google sign-in popups
    (Drive mount and the link lookup).
-3. Read the report, run `apply` (it only *moves* files), run `verify`, and only
-   if it says **VERIFIED** delete the `superseded` folder and **empty the Drive
-   trash**.
+3. **Merge** writes every message once into a single file in `<folder>-merged/`
+   (`sms-…-merged.xml`, plus `calls-…-merged.xml` if you have call logs).
+4. **Verify** re-reads every original backup and proves each message is in the
+   merged file. Only if it says **VERIFIED** are the originals moved into
+   `<folder>-to-delete/`.
+5. Delete `<folder>-to-delete/` and **empty the Drive trash**. Keep
+   `<folder>-merged/`.
+
+End result: **one file** with every text, MMS and call from every backup.
 
 Nothing is downloaded to anyone's computer; Colab runs next to Drive in
 Google's cloud.
@@ -47,12 +53,37 @@ their own account. That is also the only way to actually free *their* storage.
 centrally, the files would first have to be moved into a Shared Drive — a
 bigger, slower operation than just running the notebook three times.)
 
-## How the fix works ("fix in place")
+## How it works: merge (the notebook's approach)
 
-Each full backup is a superset of the previous one (minus anything deleted
-from the phone in between). So almost every old file is redundant. Instead of
-building one giant merged file, the tool **keeps the files that matter
-untouched** and removes the rest:
+```
+sms-…0101.xml  sms-…0201.xml  …  sms-…0414.xml      (44 full backups, 125 GB)
+        \            |                 /
+         └──── merge: each message written once ────▶  sms-…0414-merged.xml  (~3 GB)
+                (newest copy wins)
+         ┌──── verify-merged: re-read all 44, check every record ─┘
+         ▼
+   VERIFIED → originals moved to <folder>-to-delete/  → you delete + empty trash
+```
+
+* **merge** reads every `sms-*.xml` / `calls-*.xml` under the inputs (folders
+  are searched recursively), newest first, and writes each message once, using
+  the copy from the newest backup (latest read status / contact name). Messages
+  that were deleted from the phone and only survive in old backups are
+  included. Output is the backup app's own XML format, so it restores like any
+  backup. When done it re-reads the new file and checks every record came out
+  byte-identical. Originals are not touched.
+* **verify-merged** is the independent check: it re-reads every original and
+  classifies each record as an exact copy in the merged file, the same message
+  with some details differing (listed per attribute), or **missing** (saved to
+  `verify-missing-*.xml`; nothing is moved). With `--move-sources-to` it moves
+  the originals into one folder only after VERIFIED. If a source file can't be
+  read to the end (Drive I/O errors) but nothing is missing, that file stays
+  put and only the fully verified files are moved.
+
+## Alternative: keep the original files in place (analyze / apply)
+
+Instead of writing a new file, this keeps the newest full backup (and any real
+incremental backups) untouched and removes the rest:
 
 ```
 newest ─────────────────────────────────────────────────▶ oldest
@@ -115,8 +146,8 @@ and one doesn't), *both* are kept. The tool errs on the side of keeping data.
 * **Space is only freed after emptying the Drive trash.**
 * Make sure the app is now set to incremental / "only new messages" backups
   (or a sensible "keep last N backups" retention), otherwise the problem comes
-  back. Keep the `recovered` files *outside* the app's backup folder so its
-  retention setting can never delete them.
+  back. Keep the merged / `recovered` files *outside* the app's backup folder so
+  its retention setting can never delete them.
 
 ## Running it elsewhere
 
@@ -124,6 +155,11 @@ Python ≥ 3.8, standard library only.
 
 ```bash
 pip install git+https://github.com/LegitUnicorn/SMS-Cleanup.git
+smscleanup merge         /path/to/SMSBackupRestore --out-dir /path/to/merged
+smscleanup verify-merged /path/to/SMSBackupRestore --out-dir /path/to/merged \
+                         --move-sources-to /path/to/to-delete   # moves only if VERIFIED
+
+# alternative flow (keep originals in place)
 smscleanup analyze /path/to/SMSBackupRestore          # read-only, resumable
 smscleanup report  /path/to/SMSBackupRestore
 smscleanup apply   /path/to/SMSBackupRestore          # asks for confirmation; moves only

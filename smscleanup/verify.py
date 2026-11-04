@@ -27,7 +27,7 @@ import time
 import xml.etree.ElementTree as ET
 import zlib
 from collections import Counter
-from typing import Callable, Dict, List, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from .cleanup import FNAME_RE, human, log
 from .records import XML_DECL, record_key, serialize
@@ -104,11 +104,43 @@ def verify(backup_dir: str, work_dir: str, attempts: int = 3, retry_wait: float 
     if not removed:
         log("Nothing in %s to verify. Run `apply` first (it only moves files; nothing is deleted)." % sup_dir)
         return False
-
-    log("REMAINING: %d files (%s)" % (len(remaining), human(sum(os.path.getsize(p) for p in remaining))))
-    log("REMOVED:   %d files (%s)" % (len(removed), human(sum(os.path.getsize(p) for p in removed))))
     if others:
         log("Other files in the backup folder (not backups; never touched): %s" % ", ".join(others))
+    return compare(
+        remaining,
+        removed,
+        work_dir,
+        attempts=attempts,
+        retry_wait=retry_wait,
+        ok_msg="VERIFIED: every message in the %d removed files is still present in the remaining files.\n"
+        "It is safe to delete %s and then empty the Drive trash." % (len(removed), sup_dir),
+        fail_msg="NOT VERIFIED -- do NOT delete %s." % sup_dir,
+    )
+
+
+def compare(
+    remaining: List[str],
+    removed: List[str],
+    work_dir: str,
+    ok_msg: str,
+    fail_msg: str,
+    target: str = "remaining",
+    source: str = "removed",
+    attempts: int = 3,
+    retry_wait: float = 15.0,
+    info: Optional[dict] = None,
+) -> bool:
+    """Prove every record in ``removed`` files exists in ``remaining`` files.
+
+    Reads everything from disk; uses nothing from analyze/apply.  If ``info``
+    is given it is filled with ``clean_sources`` (removed files read completely
+    with nothing missing), ``missing`` and ``target_ok``.
+    """
+    clean: List[str] = []
+    target_ok = True
+    os.makedirs(work_dir, exist_ok=True)
+    log("%-10s %d files (%s)" % (target.upper() + ":", len(remaining), human(sum(os.path.getsize(p) for p in remaining))))
+    log("%-10s %d files (%s)" % (source.upper() + ":", len(removed), human(sum(os.path.getsize(p) for p in removed))))
 
     # ---- 1. index everything that remains, straight from disk ----
     index: Dict[bytes, Dict[bytes, AttrFP]] = {}
@@ -123,12 +155,13 @@ def verify(backup_dir: str, work_dir: str, attempts: int = 3, retry_wait: float 
                 index.setdefault(record_key(el), {})[strict_hash(el)] = attr_fp(el)
         return tags
 
-    log("\nReading remaining files:")
+    log("\nReading %s files:" % target)
     for p in remaining:
         t0 = time.monotonic()
         tags, err = _with_retries(load, p, attempts, retry_wait)
         if err:
-            problems.append("could not fully read REMAINING file %s (%s)" % (os.path.basename(p), err))
+            problems.append("could not fully read %s file %s (%s)" % (target.upper(), os.path.basename(p), err))
+            target_ok = False
             log("  %s: %s" % (os.path.basename(p), err))
             continue
         remain_tags.update(tags)
@@ -139,7 +172,6 @@ def verify(backup_dir: str, work_dir: str, attempts: int = 3, retry_wait: float 
     missing_counts: Counter = Counter()
     missing_seen: set = set()
     total: Counter = Counter()
-    diffs: Counter = Counter()
     removed_distinct: Dict[str, set] = {}
 
     def check(path: str) -> Counter:
@@ -187,16 +219,18 @@ def verify(backup_dir: str, work_dir: str, attempts: int = 3, retry_wait: float 
                 os.remove(spool_path)
         return c
 
-    log("\nChecking removed files:")
+    log("\nChecking %s files:" % source)
     for p in removed:
         t0 = time.monotonic()
         c, err = _with_retries(check, p, attempts, retry_wait)
         name = os.path.basename(p)
         if err:
-            problems.append("could not fully read REMOVED file %s (%s)" % (name, err))
+            problems.append("could not fully read %s file %s (%s)" % (source.upper(), name, err))
             log("  %s: %s" % (name, err))
             continue
         total.update(c)
+        if c["missing"] == 0:
+            clean.append(p)
         log(
             "  %s: %d records -> %d exact, %d differ, %d MISSING (%.0fs)"
             % (name, c["records"], c["exact"], c["differs"], c["missing"], time.monotonic() - t0)
@@ -206,31 +240,30 @@ def verify(backup_dir: str, work_dir: str, attempts: int = 3, retry_wait: float 
 
     # ---- 3. verdict ----
     log("\n================ VERIFY SUMMARY ================")
-    log("remaining files hold: %s" % _tags(remain_tags))
+    log("%s files hold: %s" % (target, _tags(remain_tags)))
     log(
-        "distinct messages across removed files: %s"
+        "distinct messages across " + source + " files: %s"
         % ", ".join("%s=%d" % (t, len(s)) for t, s in sorted(removed_distinct.items()))
     )
-    log("removed records checked: %d" % total["records"])
-    log("  exact copy remains:              %d" % total["exact"])
+    log("%s records checked: %d" % (source, total["records"]))
+    log("  exact copy present:              %d" % total["exact"])
     log("  same message, details differ:    %d" % total["differs"])
     for k, v in sorted(((k[5:], v) for k, v in total.items() if k.startswith("diff:")), key=lambda kv: -kv[1]):
         log("      %-28s %d" % (k, v))
     log(
-        "  MISSING from remaining files:    %d (%d distinct messages)"
-        % (total["missing"], sum(missing_counts.values()))
+        "  %-32s %d (%d distinct messages)"
+        % ("MISSING from %s files:" % target, total["missing"], sum(missing_counts.values()))
     )
     for p in problems:
         log("  PROBLEM: " + p)
 
     ok = total["missing"] == 0 and not problems
+    if info is not None:
+        info.update(clean_sources=clean, missing=total["missing"], target_ok=target_ok)
     if ok:
-        log(
-            "\nVERIFIED: every message in the %d removed files is still present in the remaining files.\n"
-            "It is safe to delete %s and then empty the Drive trash." % (len(removed), sup_dir)
-        )
+        log("\n" + ok_msg)
     else:
-        log("\nNOT VERIFIED -- do NOT delete %s." % sup_dir)
+        log("\n" + fail_msg)
         if missing_files:
             log("Records not found anywhere else were saved to: %s" % ", ".join(missing_files))
         if problems:
