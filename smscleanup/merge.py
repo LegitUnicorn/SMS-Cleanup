@@ -4,7 +4,8 @@
     smscleanup verify-merged <inputs...> --out-dir DIR
 
 ``merge`` reads every ``sms-*.xml`` / ``calls-*.xml`` under the inputs (files
-or folders, searched recursively), newest first, and writes each message once:
+or folders, searched recursively, including backups inside .zip files), newest
+first, and writes each message once:
 
     DIR/sms-<newest timestamp>-merged.xml     (SMS + MMS)
     DIR/calls-<newest timestamp>-merged.xml   (call log, if there are any)
@@ -31,68 +32,18 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from .cleanup import human, log
 from .records import ROOT_FOR_GROUP, XML_DECL, record_key, serialize
+from .sources import (  # noqa: F401  (collect_inputs/describe_sources re-exported for the notebook)
+    collect_inputs,
+    container,
+    describe_sources,
+    display_name,
+    open_source,
+    source_size,
+)
 from .verify import _diff_names, _tags, _with_retries, attr_fp, compare, strict_hash
 from .xmlstream import iter_records
 
-NAME_RE = re.compile(r"^(sms|calls)-.*\.xml$", re.IGNORECASE)
-TS_RE = re.compile(r"(\d{14})")
 MERGED_RE = re.compile(r"^(sms|calls)-\d{14}-merged\.xml$", re.IGNORECASE)
-
-
-def collect_inputs(inputs: Sequence[str], exclude: Sequence[str] = ()) -> List[Tuple[str, str, str]]:
-    """Return [(group, timestamp or '', path)] newest first within each group."""
-    excl = [os.path.realpath(e) for e in exclude]
-    seen = set()
-    out = []
-
-    def add(path: str) -> None:
-        name = os.path.basename(path)
-        m = NAME_RE.match(name)
-        if not m:
-            return
-        real = os.path.realpath(path)
-        if real in seen or any(real == e or real.startswith(e + os.sep) for e in excl):
-            return
-        seen.add(real)
-        ts = TS_RE.search(name)
-        out.append((m.group(1).lower(), ts.group(1) if ts else "", path))
-
-    for p in inputs:
-        if os.path.isfile(p):
-            add(p)
-        elif os.path.isdir(p):
-            for d, subdirs, files in os.walk(p):
-                if any(os.path.realpath(d) == e for e in excl):
-                    subdirs[:] = []
-                    continue
-                subdirs.sort()
-                for f in sorted(files):
-                    add(os.path.join(d, f))
-        else:
-            raise SystemExit("input not found: %s" % p)
-    # newest first; files without a timestamp (e.g. sms-recovered.xml) last
-    out.sort(key=lambda t: (t[0], t[1] != "", t[1], t[2]), reverse=True)
-    return out
-
-
-def describe_sources(files: List[Tuple[str, str, str]], show: int = 3) -> List[str]:
-    """Human summary of collect_inputs() output, grouped by folder."""
-    by_dir: Dict[str, dict] = {}
-    for group, _, path in files:
-        e = by_dir.setdefault(os.path.dirname(path), {"sms": 0, "calls": 0, "bytes": 0, "names": []})
-        e[group] += 1
-        e["bytes"] += os.path.getsize(path)
-        e["names"].append(os.path.basename(path))
-    total = sum(e["bytes"] for e in by_dir.values())
-    lines = ["%d backup files (%s) in %d folder(s):" % (len(files), human(total), len(by_dir))]
-    for d in sorted(by_dir):
-        e = by_dir[d]
-        kinds = [("%d sms" % e["sms"]) if e["sms"] else "", ("%d calls" % e["calls"]) if e["calls"] else ""]
-        lines.append("  %s  ->  %s (%s)" % (d, ", ".join(k for k in kinds if k), human(e["bytes"])))
-        names = sorted(e["names"])
-        shown = names if len(names) <= 2 * show else names[:show] + ["..."] + names[-show:]
-        lines += ["      " + n for n in shown]
-    return lines
 
 
 def merge(
@@ -105,9 +56,12 @@ def merge(
     os.makedirs(out_dir, exist_ok=True)
     if tmp_dir:
         os.makedirs(tmp_dir, exist_ok=True)
-    files = collect_inputs(inputs, exclude=[out_dir])
+    skipped: List[str] = []
+    files = collect_inputs(inputs, exclude=[out_dir], problems=skipped)
+    for p in skipped:
+        log("SKIPPED: " + p)
     if not files:
-        log("No sms-*.xml / calls-*.xml files found in: %s" % ", ".join(inputs))
+        log("No sms-*.xml / calls-*.xml backups found in: %s" % ", ".join(inputs))
         return False
     log("Merging " + "\n".join(describe_sources(files)))
     ok = True
@@ -142,7 +96,7 @@ def _merge_group(
     final = os.path.join(out_dir, "%s-%s-merged.xml" % (group, newest))
     log(
         "\n[%s] merging %d files (%s) into %s"
-        % (group, len(gfiles), human(sum(os.path.getsize(p) for _, p in gfiles)), final)
+        % (group, len(gfiles), human(sum(source_size(p) for _, p in gfiles)), final)
     )
 
     # key -> (strict hash, attribute fingerprint) of the copy we wrote
@@ -155,14 +109,14 @@ def _merge_group(
     body = tempfile.NamedTemporaryFile(mode="w+b", suffix=".merge", dir=tmp_dir, delete=False)
     try:
         for ts, path in gfiles:
-            name = os.path.basename(path)
+            name = display_name(path)
             added_here: set = set()  # survives retries: records we already wrote from this file
             t0 = time.monotonic()
 
             def run(p: str) -> Counter:
                 c: Counter = Counter()
                 seen_now: set = set()  # keys seen in this read of this file
-                with open(p, "rb") as fh:
+                with open_source(p) as fh:
                     for el in iter_records(fh):
                         c["records"] += 1
                         k = record_key(el)
@@ -197,7 +151,7 @@ def _merge_group(
                     % (name, err, len(added_here))
                 )
                 log("  %s: %s" % (name, err))
-                rows.append("| %s | %s | ? | %d | ? | ? | INCOMPLETE |" % (name, human(os.path.getsize(path)), len(added_here)))
+                rows.append("| %s | %s | ? | %d | ? | ? | INCOMPLETE |" % (name, human(source_size(path)), len(added_here)))
                 continue
             totals.update(c)
             log(
@@ -217,7 +171,7 @@ def _merge_group(
                 "| %s | %s | %d | %d | %d | %d | ok |"
                 % (
                     name,
-                    human(os.path.getsize(path)),
+                    human(source_size(path)),
                     c["records"],
                     c["added"],
                     c["dup_exact"] + c["dup_differs"],
@@ -303,11 +257,15 @@ def verify_merged(
         log("No *-merged.xml files in %s. Run `merge` first." % out_dir)
         return False
     exclude = [out_dir] + ([move_sources_to] if move_sources_to else [])
-    sources = [p for _, _, p in collect_inputs(inputs, exclude=exclude)]
+    skipped: List[str] = []
+    sources = [p for _, _, p in collect_inputs(inputs, exclude=exclude, problems=skipped)]
+    for p in skipped:
+        log("SKIPPED (stays where it is): " + p)
     if not sources:
         log("No source backups found in: %s" % ", ".join(inputs))
         return False
-    sizes = {p: os.path.getsize(p) for p in sources + merged}
+    files = sorted({container(p) for p in sources}) + merged
+    sizes = {f: os.path.getsize(f) for f in files}
     info: dict = {}
     ok = compare(
         merged,
@@ -317,9 +275,9 @@ def verify_merged(
         source="source",
         attempts=attempts,
         retry_wait=retry_wait,
-        ok_msg="VERIFIED: every message in all %d source files is present in the merged file(s):\n  %s\n"
-        "Keep the merged file(s). The %d source files can be deleted (then empty the Drive trash)."
-        % (len(sources), "\n  ".join(merged), len(sources)),
+        ok_msg="VERIFIED: every message in all %d source backups is present in the merged file(s):\n  %s\n"
+        "Keep the merged file(s). The source backups can be deleted (then empty the Drive trash)."
+        % (len(sources), "\n  ".join(merged)),
         fail_msg="NOT VERIFIED -- do NOT delete any source files.",
         info=info,
     )
@@ -327,40 +285,49 @@ def verify_merged(
         if ok:
             _move_sources(sources, merged, sizes, move_sources_to)
         elif info.get("target_ok") and info.get("missing") == 0 and info.get("clean_sources"):
-            # Only problem: some source files could not be read to the end. Every
-            # other source file was checked completely, so those are safe to move.
-            stuck = [p for p in sources if p not in info["clean_sources"]]
+            # Only problem: some sources could not be read to the end. Every other
+            # source was checked completely, so the files holding only those are
+            # safe to move.  (A .zip moves only if every backup inside it checked out.)
+            clean = set(info["clean_sources"])
+            stuck = sorted({container(p) for p in sources if p not in clean})
+            movable = [p for p in sources if container(p) not in stuck]
             log(
-                "\nNothing is missing, but %d source file(s) could not be read to the end, so they stay where "
-                "they are:\n  %s\nThe other %d source files were each verified completely."
-                % (len(stuck), "\n  ".join(stuck), len(info["clean_sources"]))
+                "\nNothing is missing, but %d file(s) could not be read to the end, so they stay where "
+                "they are:\n  %s\nEverything else was verified completely."
+                % (len(stuck), "\n  ".join(stuck))
             )
-            _move_sources(info["clean_sources"], merged, sizes, move_sources_to)
+            if movable:
+                _move_sources(movable, merged, sizes, move_sources_to)
         else:
             log("Nothing was moved.")
     return ok
 
 
 def _move_sources(sources: List[str], merged: List[str], sizes: Dict[str, int], dest: str) -> None:
-    """Only after VERIFIED: gather the source backups in one folder to delete."""
-    for p in sources + merged:
-        if not os.path.exists(p) or os.path.getsize(p) != sizes[p]:
-            log("A file changed while verifying (%s); not moving anything." % p)
+    """Only after VERIFIED: gather the source files (.xml or .zip) in one folder to delete."""
+    files = []
+    for p in sources:
+        c = container(p)
+        if c not in files:
+            files.append(c)
+    for f in files + merged:
+        if not os.path.exists(f) or os.path.getsize(f) != sizes[f]:
+            log("A file changed while verifying (%s); not moving anything." % f)
             return
     os.makedirs(dest, exist_ok=True)
     total = 0
-    for p in sources:
-        name = os.path.basename(p)
+    for f in files:
+        name = os.path.basename(f)
         target = os.path.join(dest, name)
         n = 1
         while os.path.exists(target):
             stem, ext = os.path.splitext(name)
             target = os.path.join(dest, "%s.%d%s" % (stem, n, ext))
             n += 1
-        shutil.move(p, target)
-        total += sizes[p]
+        shutil.move(f, target)
+        total += sizes[f]
     log(
         "\nMoved the %d verified source files (%s) to %s.\n"
         "Delete that folder in Google Drive and then EMPTY THE TRASH to free the space."
-        % (len(sources), human(total), dest)
+        % (len(files), human(total), dest)
     )

@@ -62,7 +62,7 @@ def test_verify_merged_passes_then_catches_loss(folder, tmp_path, capsys):
     M.merge([str(folder)], out)
     assert M.verify_merged([str(folder)], out) is True
     log = capsys.readouterr().out
-    assert "VERIFIED: every message in all 6 source files" in log
+    assert "VERIFIED: every message in all 6 source backups" in log
     assert "read" in log  # the stale read flag shows up as "details differ"
 
     # drop message C from the merged file -> must be caught and rescued
@@ -218,6 +218,6 @@ def test_merge_lists_every_source_folder_first(folder, tmp_path, capsys):
     out = str(tmp_path / "merged")
     assert M.merge([str(folder)], out) is True
     log = capsys.readouterr().out
-    assert "Merging 8 backup files" in log and "in 2 folder(s):" in log
+    assert "Merging 8 backups" in log and "in 2 folder(s):" in log
     assert "Old phone  ->  1 sms, 1 calls" in log
     assert "from 2021" in open(os.path.join(out, "sms-20250302000000-merged.xml"), encoding="utf-8").read()

@@ -25,12 +25,14 @@ import hashlib
 import os
 import time
 import xml.etree.ElementTree as ET
+import zipfile
 import zlib
 from collections import Counter
 from typing import Callable, Dict, List, Optional, Tuple
 
 from .cleanup import FNAME_RE, human, log
 from .records import XML_DECL, record_key, serialize
+from .sources import display_name, open_source, source_size
 from .xmlstream import iter_records
 
 AttrFP = Tuple[Tuple[str, int], ...]
@@ -72,7 +74,7 @@ def _with_retries(fn: Callable[[str], object], path: str, attempts: int, wait: f
     for attempt in range(1, attempts + 1):
         try:
             return fn(path), None
-        except OSError as exc:
+        except (OSError, zipfile.BadZipFile, zlib.error, EOFError) as exc:
             if attempt >= attempts:
                 return None, "read error: %s" % exc
             log("     read error (%s); retrying %d of %d" % (exc, attempt + 1, attempts))
@@ -139,8 +141,8 @@ def compare(
     clean: List[str] = []
     target_ok = True
     os.makedirs(work_dir, exist_ok=True)
-    log("%-10s %d files (%s)" % (target.upper() + ":", len(remaining), human(sum(os.path.getsize(p) for p in remaining))))
-    log("%-10s %d files (%s)" % (source.upper() + ":", len(removed), human(sum(os.path.getsize(p) for p in removed))))
+    log("%-10s %d files (%s)" % (target.upper() + ":", len(remaining), human(sum(source_size(p) for p in remaining))))
+    log("%-10s %d files (%s)" % (source.upper() + ":", len(removed), human(sum(source_size(p) for p in removed))))
 
     # ---- 1. index everything that remains, straight from disk ----
     index: Dict[bytes, Dict[bytes, AttrFP]] = {}
@@ -149,7 +151,7 @@ def compare(
 
     def load(path: str) -> Counter:
         tags: Counter = Counter()
-        with open(path, "rb") as fh:
+        with open_source(path) as fh:
             for el in iter_records(fh):
                 tags[el.tag] += 1
                 index.setdefault(record_key(el), {})[strict_hash(el)] = attr_fp(el)
@@ -160,12 +162,12 @@ def compare(
         t0 = time.monotonic()
         tags, err = _with_retries(load, p, attempts, retry_wait)
         if err:
-            problems.append("could not fully read %s file %s (%s)" % (target.upper(), os.path.basename(p), err))
+            problems.append("could not fully read %s file %s (%s)" % (target.upper(), display_name(p), err))
             target_ok = False
-            log("  %s: %s" % (os.path.basename(p), err))
+            log("  %s: %s" % (display_name(p), err))
             continue
         remain_tags.update(tags)
-        log("  %s: %s in %.0fs" % (os.path.basename(p), _tags(tags), time.monotonic() - t0))
+        log("  %s: %s in %.0fs" % (display_name(p), _tags(tags), time.monotonic() - t0))
 
     # ---- 2. check every removed record ----
     missing_out: Dict[str, object] = {}
@@ -182,7 +184,7 @@ def compare(
         spooled: List[Tuple[bytes, str, int, int]] = []
         with open(spool_path, "w+b") as spool:
             try:
-                with open(path, "rb") as fh:
+                with open_source(path) as fh:
                     for el in iter_records(fh):
                         c["records"] += 1
                         key = record_key(el)
@@ -223,7 +225,7 @@ def compare(
     for p in removed:
         t0 = time.monotonic()
         c, err = _with_retries(check, p, attempts, retry_wait)
-        name = os.path.basename(p)
+        name = display_name(p)
         if err:
             problems.append("could not fully read %s file %s (%s)" % (source.upper(), name, err))
             log("  %s: %s" % (name, err))
