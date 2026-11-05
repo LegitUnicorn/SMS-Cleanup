@@ -196,3 +196,28 @@ def test_missing_record_moves_nothing_even_if_other_files_clean(folder, tmp_path
     open(p, "w", encoding="utf-8").write("".join(l for l in good.splitlines(True) if 'body="msg E"' not in l))
     assert M.verify_merged([str(folder)], out, move_sources_to=trash) is False
     assert not os.path.exists(trash)
+
+
+def test_report_counts_repeats_inside_a_file_separately(folder, tmp_path, capsys):
+    out = str(tmp_path / "merged")
+    M.merge([str(folder)], out)
+    log = capsys.readouterr().out
+    # sms-20250301 holds A twice: 7 records = 6 new + 1 repeated inside the file
+    assert "sms-20250301000000.xml: 7 records -> 6 new, 0 already merged (0 identical, 0 with different details), 1 repeated inside this file" in log
+    report = open(os.path.join(out, "merge-report.md")).read()
+    assert "| sms-20250301000000.xml |" in report and "| 7 | 6 | 0 | 1 | ok |" in report
+    # "new" summed over all files equals the records in the merged file
+    assert len(read(os.path.join(out, "sms-20250302000000-merged.xml"))) == 8
+
+
+def test_merge_lists_every_source_folder_first(folder, tmp_path, capsys):
+    old = folder / "Old phone"
+    old.mkdir()
+    write(old, "sms-20211001000933.xml", smses(sms(5, "from 2021")))
+    write(old, "calls-20211001000933.xml", calls(call(99)))
+    out = str(tmp_path / "merged")
+    assert M.merge([str(folder)], out) is True
+    log = capsys.readouterr().out
+    assert "Merging 8 backup files" in log and "in 2 folder(s):" in log
+    assert "Old phone  ->  1 sms, 1 calls" in log
+    assert "from 2021" in open(os.path.join(out, "sms-20250302000000-merged.xml"), encoding="utf-8").read()
