@@ -1,4 +1,5 @@
 import os
+import shutil
 
 import pytest
 
@@ -152,11 +153,12 @@ def test_move_sources_only_after_verified(folder, tmp_path):
     assert M.verify_merged([str(folder)], out, move_sources_to=trash) is False
     assert not os.path.exists(trash)
     assert len(os.listdir(folder)) == 7
-    # restore -> VERIFIED -> all 6 backups move, other files stay
+    # re-merge -> VERIFIED -> all 6 backups move, other files stay; the earlier
+    # (tampered) merged files were set aside as sources and move along with them
     M.merge([str(folder)], out)
     assert M.verify_merged([str(folder)], out, move_sources_to=trash) is True
     assert os.listdir(folder) == ["notes.txt"]
-    assert len(os.listdir(trash)) == 6
+    assert len(os.listdir(trash)) == 6 + 2
     assert len(read(os.path.join(out, "sms-20250302000000-merged.xml"))) == 8
 
 
@@ -221,3 +223,55 @@ def test_merge_lists_every_source_folder_first(folder, tmp_path, capsys):
     assert "Merging 8 backups" in log and "in 2 folder(s):" in log
     assert "Old phone  ->  1 sms, 1 calls" in log
     assert "from 2021" in open(os.path.join(out, "sms-20250302000000-merged.xml"), encoding="utf-8").read()
+
+
+def test_second_merge_never_loses_an_earlier_merged_file(folder, tmp_path, capsys):
+    """Round 1 merges and deletes the originals; round 2 adds another folder.
+    The round-1 merged file is the only copy of its messages and must survive."""
+    out = str(tmp_path / "SMS-merged")
+    trash = str(tmp_path / "to-delete")
+    assert M.merge([str(folder)], out) and M.verify_merged([str(folder)], out, move_sources_to=trash)
+    shutil.rmtree(trash)  # originals deleted + trash emptied
+    first = read(os.path.join(out, "sms-20250302000000-merged.xml"))
+    assert len(first) == 8
+
+    more = tmp_path / "Old phone"
+    more.mkdir()
+    write(more, "sms-20210101000000.xml", smses(sms(7, "only on the old phone")))
+    # same newest timestamp -> the new merged file gets the SAME name as the old one
+    assert M.merge([str(folder), str(more)], out) is True
+    log = capsys.readouterr().out
+    assert "earlier merged file(s)" in log
+    assert sorted(os.listdir(tmp_path / "SMS-merged-previous")) == [
+        "calls-20250201000000-merged.xml",
+        "sms-20250302000000-merged.xml",
+    ]
+    new = read(os.path.join(out, "sms-20250302000000-merged.xml"))
+    assert len(new) == 9
+    assert {r.get("body") for r in first} <= {r.get("body") for r in new}
+
+    assert M.verify_merged([str(folder), str(more)], out, move_sources_to=trash) is True
+    assert sorted(os.listdir(trash)) == [
+        "calls-20250201000000-merged.xml",
+        "sms-20210101000000.xml",
+        "sms-20250302000000-merged.xml",
+    ]
+    assert not os.path.exists(tmp_path / "SMS-merged-previous")
+    assert len(read(os.path.join(out, "sms-20250302000000-merged.xml"))) == 9
+
+
+def test_rerunning_merge_keeps_everything(folder, tmp_path):
+    out = str(tmp_path / "merged")
+    for _ in range(3):  # e.g. a teammate re-runs Step 5 a few times
+        assert M.merge([str(folder)], out) is True
+    prev = sorted(os.listdir(str(tmp_path / "merged-previous")))
+    assert prev == [
+        "calls-20250201000000-merged.1.xml",
+        "calls-20250201000000-merged.xml",
+        "sms-20250302000000-merged.1.xml",
+        "sms-20250302000000-merged.xml",
+    ]
+    assert len(read(os.path.join(out, "sms-20250302000000-merged.xml"))) == 8
+    trash = str(tmp_path / "to-delete")
+    assert M.verify_merged([str(folder)], out, move_sources_to=trash) is True
+    assert len(os.listdir(trash)) == 6 + 4

@@ -56,6 +56,10 @@ def merge(
     os.makedirs(out_dir, exist_ok=True)
     if tmp_dir:
         os.makedirs(tmp_dir, exist_ok=True)
+    # An earlier merged file may be the ONLY copy of its messages (its sources may be
+    # deleted already). Never overwrite it: set it aside and merge it in like any backup.
+    _set_aside_earlier_merged(out_dir)
+    inputs = _with_previous(inputs, out_dir)
     skipped: List[str] = []
     files = collect_inputs(inputs, exclude=[out_dir], problems=skipped)
     for p in skipped:
@@ -239,6 +243,53 @@ def _merge_group(
     return not problems, lines
 
 
+def previous_dir(out_dir: str) -> str:
+    """Where earlier merged files are kept until a new merge has been verified."""
+    return out_dir.rstrip("/\\") + "-previous"
+
+
+def earlier_merged(out_dir: str) -> List[str]:
+    """Earlier merged files that the next merge will include as sources."""
+    prev = previous_dir(out_dir)
+    held = []
+    if os.path.isdir(prev):
+        held = sorted(os.path.join(prev, n) for n in os.listdir(prev) if n.lower().endswith(".xml"))
+    return merged_outputs(out_dir) + held
+
+
+def _unique_target(dest: str, name: str) -> str:
+    target = os.path.join(dest, name)
+    n = 1
+    while os.path.exists(target):
+        stem, ext = os.path.splitext(name)
+        target = os.path.join(dest, "%s.%d%s" % (stem, n, ext))
+        n += 1
+    return target
+
+
+def _set_aside_earlier_merged(out_dir: str) -> None:
+    olds = merged_outputs(out_dir)
+    if not olds:
+        return
+    prev = previous_dir(out_dir)
+    os.makedirs(prev, exist_ok=True)
+    for f in olds:
+        shutil.move(f, _unique_target(prev, os.path.basename(f)))
+    log(
+        "Found %d earlier merged file(s) in %s. They were moved to %s and are merged in as a source, "
+        "so nothing in them can be lost; they are deleted only after Step 6 verifies the new file."
+        % (len(olds), out_dir, prev)
+    )
+
+
+def _with_previous(inputs: Sequence[str], out_dir: str) -> List[str]:
+    prev = previous_dir(out_dir)
+    out = list(inputs)
+    if os.path.isdir(prev) and os.listdir(prev):
+        out.append(prev)
+    return out
+
+
 def merged_outputs(out_dir: str) -> List[str]:
     if not os.path.isdir(out_dir):
         return []
@@ -257,6 +308,7 @@ def verify_merged(
         log("No *-merged.xml files in %s. Run `merge` first." % out_dir)
         return False
     exclude = [out_dir] + ([move_sources_to] if move_sources_to else [])
+    inputs = _with_previous(inputs, out_dir)
     skipped: List[str] = []
     sources = [p for _, _, p in collect_inputs(inputs, exclude=exclude, problems=skipped)]
     for p in skipped:
@@ -317,15 +369,11 @@ def _move_sources(sources: List[str], merged: List[str], sizes: Dict[str, int], 
     os.makedirs(dest, exist_ok=True)
     total = 0
     for f in files:
-        name = os.path.basename(f)
-        target = os.path.join(dest, name)
-        n = 1
-        while os.path.exists(target):
-            stem, ext = os.path.splitext(name)
-            target = os.path.join(dest, "%s.%d%s" % (stem, n, ext))
-            n += 1
-        shutil.move(f, target)
+        shutil.move(f, _unique_target(dest, os.path.basename(f)))
         total += sizes[f]
+    prev = previous_dir(os.path.dirname(merged[0])) if merged else None
+    if prev and os.path.isdir(prev) and not os.listdir(prev):
+        os.rmdir(prev)
     log(
         "\nMoved the %d verified source files (%s) to %s.\n"
         "Delete that folder in Google Drive and then EMPTY THE TRASH to free the space."

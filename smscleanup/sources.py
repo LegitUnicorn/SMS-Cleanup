@@ -21,7 +21,7 @@ SEP = "\0"
 NAME_RE = re.compile(r"^(sms|calls)-.*\.xml$", re.IGNORECASE)
 ZIP_NAME_RE = re.compile(r"^(sms|calls)-.*\.zip$", re.IGNORECASE)
 TS_RE = re.compile(r"(\d{14})")
-SKIP_DIR_SUFFIXES = ("-cleanup", "-merged", "-to-delete")
+SKIP_DIR_SUFFIXES = ("-cleanup", "-merged", "-merged-previous", "-to-delete")
 
 Source = Tuple[str, str, str]  # (group, timestamp or "", source)
 

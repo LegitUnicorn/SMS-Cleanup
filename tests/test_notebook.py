@@ -114,3 +114,14 @@ def test_step3_searches_drive_when_folder_is_wrong(tmp_path, capsys):
     out, _ = run(root, root / "SMSBackupRestore", capsys)
     assert "No sms-/calls- backups found" in out
     assert "%s  (1 .xml)" % real in out
+
+
+def test_step3_mentions_earlier_merged_files(tmp_path, capsys):
+    root, d, zips = make_drive(tmp_path)
+    merged = root / "SMS-merged"
+    merged.mkdir()
+    write(merged, "sms-20250414013013-merged.xml", smses(sms(1, "a")))
+    out, _ = run(root, d, capsys, other=str(zips))
+    assert "Your earlier merged file(s) are included too" in out
+    assert "SMS-merged-previous so they are never overwritten" in out
+    assert str(merged / "sms-20250414013013-merged.xml") in out
