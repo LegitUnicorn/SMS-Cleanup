@@ -75,6 +75,26 @@ def collect_inputs(inputs: Sequence[str], exclude: Sequence[str] = ()) -> List[T
     return out
 
 
+def describe_sources(files: List[Tuple[str, str, str]], show: int = 3) -> List[str]:
+    """Human summary of collect_inputs() output, grouped by folder."""
+    by_dir: Dict[str, dict] = {}
+    for group, _, path in files:
+        e = by_dir.setdefault(os.path.dirname(path), {"sms": 0, "calls": 0, "bytes": 0, "names": []})
+        e[group] += 1
+        e["bytes"] += os.path.getsize(path)
+        e["names"].append(os.path.basename(path))
+    total = sum(e["bytes"] for e in by_dir.values())
+    lines = ["%d backup files (%s) in %d folder(s):" % (len(files), human(total), len(by_dir))]
+    for d in sorted(by_dir):
+        e = by_dir[d]
+        kinds = [("%d sms" % e["sms"]) if e["sms"] else "", ("%d calls" % e["calls"]) if e["calls"] else ""]
+        lines.append("  %s  ->  %s (%s)" % (d, ", ".join(k for k in kinds if k), human(e["bytes"])))
+        names = sorted(e["names"])
+        shown = names if len(names) <= 2 * show else names[:show] + ["..."] + names[-show:]
+        lines += ["      " + n for n in shown]
+    return lines
+
+
 def merge(
     inputs: Sequence[str],
     out_dir: str,
@@ -89,6 +109,7 @@ def merge(
     if not files:
         log("No sms-*.xml / calls-*.xml files found in: %s" % ", ".join(inputs))
         return False
+    log("Merging " + "\n".join(describe_sources(files)))
     ok = True
     report = ["# Merge report", ""]
     for group in sorted({g for g, _, _ in files}):
@@ -140,11 +161,16 @@ def _merge_group(
 
             def run(p: str) -> Counter:
                 c: Counter = Counter()
+                seen_now: set = set()  # keys seen in this read of this file
                 with open(p, "rb") as fh:
                     for el in iter_records(fh):
                         c["records"] += 1
                         k = record_key(el)
-                        if k in added_here:
+                        if k in seen_now:  # the same message twice inside this one backup
+                            c["dup_in_file"] += 1
+                            continue
+                        seen_now.add(k)
+                        if k in added_here:  # written by an earlier, interrupted read of this file
                             c["added"] += 1
                             continue
                         prev = index.get(k)
@@ -171,11 +197,11 @@ def _merge_group(
                     % (name, err, len(added_here))
                 )
                 log("  %s: %s" % (name, err))
-                rows.append("| %s | %s | ? | %d | ? | INCOMPLETE |" % (name, human(os.path.getsize(path)), len(added_here)))
+                rows.append("| %s | %s | ? | %d | ? | ? | INCOMPLETE |" % (name, human(os.path.getsize(path)), len(added_here)))
                 continue
             totals.update(c)
             log(
-                "  %s: %d records -> %d new, %d already merged (%d identical, %d with different details) in %.0fs"
+                "  %s: %d records -> %d new, %d already merged (%d identical, %d with different details)%s in %.0fs"
                 % (
                     name,
                     c["records"],
@@ -183,12 +209,20 @@ def _merge_group(
                     c["dup_exact"] + c["dup_differs"],
                     c["dup_exact"],
                     c["dup_differs"],
+                    ", %d repeated inside this file" % c["dup_in_file"] if c["dup_in_file"] else "",
                     time.monotonic() - t0,
                 )
             )
             rows.append(
-                "| %s | %s | %d | %d | %d | ok |"
-                % (name, human(os.path.getsize(path)), c["records"], c["added"], c["dup_exact"] + c["dup_differs"])
+                "| %s | %s | %d | %d | %d | %d | ok |"
+                % (
+                    name,
+                    human(os.path.getsize(path)),
+                    c["records"],
+                    c["added"],
+                    c["dup_exact"] + c["dup_differs"],
+                    c["dup_in_file"],
+                )
             )
         body.flush()
 
@@ -243,8 +277,8 @@ def _merge_group(
         "",
         "Output: `%s` — %d records (%s), %s" % (os.path.basename(final), count, _tags(tags), human(os.path.getsize(final))),
         "",
-        "| source file | size | records | new | already merged | status |",
-        "|---|---:|---:|---:|---:|---|",
+        "| source file | size | records | new | already merged | repeated in file | status |",
+        "|---|---:|---:|---:|---:|---:|---|",
     ] + rows + [""]
     if problems:
         lines += ["**Problems:**", ""] + ["- " + p for p in problems] + [""]
