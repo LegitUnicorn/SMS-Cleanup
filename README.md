@@ -8,6 +8,11 @@ deleted from the phone and now only exist in an old backup.
 
 ## TL;DR for each affected person
 
+**Step-by-step guide:** [SMS Backup Cleanup — Teammate Guide](https://claude.ai/artifact/4Y8jupWwtsbEA42ukvKK2o)
+(what you need, every notebook step and what it should show, and what to do
+if something looks wrong). It opens for people it has been shared with; if
+the link doesn't open for you, ask whoever sent you here to share it.
+
 1. Open [`notebooks/SMS_Cleanup_Colab.ipynb`](notebooks/SMS_Cleanup_Colab.ipynb)
    in Google Colab (*File → Open notebook → GitHub*), signed in to **the Google
    account that owns the backups**.
