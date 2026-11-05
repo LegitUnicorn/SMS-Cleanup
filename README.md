@@ -12,7 +12,10 @@ deleted from the phone and now only exist in an old backup.
    in Google Colab (*File → Open notebook → GitHub*), signed in to **the Google
    account that owns the backups**.
 2. Set `BACKUP_DIR` to the backup folder — a path, or just paste the folder's
-   drive.google.com link — and run the cells. If the folder isn't where you said,
+   drive.google.com link — and run the cells. Backups in other places (an
+   older phone's folder, copies, a folder of `.zip` backups) go in
+   `OTHER_FOLDERS`; optional Step 3b finds every folder in My Drive that holds
+   backups. Step 3 lists every backup that will be merged before anything runs. If the folder isn't where you said,
    the notebook searches your Drive and lists the folders that hold backups.
    It stops if the signed-in account doesn't own the folder: only the owner can
    free that storage, so pick the owner's account in **both** Google sign-in popups
@@ -66,7 +69,9 @@ sms-…0101.xml  sms-…0201.xml  …  sms-…0414.xml      (44 full backups, 12
 ```
 
 * **merge** reads every `sms-*.xml` / `calls-*.xml` under the inputs (folders
-  are searched recursively), newest first, and writes each message once, using
+  are searched recursively), including backups stored inside `.zip` files
+  (read in place, nothing is extracted; password-protected or unreadable zips
+  are reported and left alone), newest first, and writes each message once, using
   the copy from the newest backup (latest read status / contact name). Messages
   that were deleted from the phone and only survive in old backups are
   included. Output is the backup app's own XML format, so it restores like any
@@ -155,8 +160,8 @@ Python ≥ 3.8, standard library only.
 
 ```bash
 pip install git+https://github.com/LegitUnicorn/SMS-Cleanup.git
-smscleanup merge         /path/to/SMSBackupRestore --out-dir /path/to/merged
-smscleanup verify-merged /path/to/SMSBackupRestore --out-dir /path/to/merged \
+smscleanup merge         /path/to/SMSBackupRestore /path/to/old-phone /path/to/zips --out-dir /path/to/merged
+smscleanup verify-merged /path/to/SMSBackupRestore /path/to/old-phone /path/to/zips --out-dir /path/to/merged \
                          --move-sources-to /path/to/to-delete   # moves only if VERIFIED
 
 # alternative flow (keep originals in place)
