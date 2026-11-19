@@ -143,3 +143,49 @@ def test_find_backup_folders(drive):
     hits = find_backup_folders(str(drive))
     got = {os.path.relpath(k, drive): dict(v) for k, v in hits.items()}
     assert got == {"SMS": {"xml": 1}, "SMS zips": {"zip": 3}, "Old phone": {"xml": 1}}
+
+
+def test_top_level_only_input(tmp_path):
+    root = tmp_path / "MyDrive"
+    sub = root / "SMS-merged"
+    sub.mkdir(parents=True)
+    write(root, "sms-20250824005235.xml", smses(A))
+    write(root, "calls-20221023000904.xml", calls(call(1)))
+    write(root, "notes.txt", "x")
+    zip_one(root / "sms-20250101000000.zip", "sms-20250101000000.xml", smses(B))
+    write(sub, "sms-20250414013013-merged.xml", smses(C))  # in a subfolder: must NOT be taken
+    found = collect_inputs([str(root) + "/*"])
+    names = sorted(os.path.basename(s.replace("\0", "/")) for _, _, s in found)
+    assert names == ["calls-20221023000904.xml", "sms-20250101000000.xml", "sms-20250824005235.xml"]
+    # without /* the subfolder is swept in too
+    assert len(collect_inputs([str(root)])) == 4
+
+
+def test_merge_verify_with_loose_root_files(tmp_path):
+    root = tmp_path / "MyDrive"
+    recent = root / "SMS-RecentMerge"
+    keep = root / "SMS-merged"
+    for d in (recent, keep):
+        d.mkdir(parents=True)
+    write(recent, "sms-20250601000000-merged.xml", smses(A, B))
+    write(recent, "calls-20250601000000-merged.xml", calls(call(1), call(2)))
+    write(root, "sms-20250824005235.xml", smses(B, C))  # incremental: C is new
+    write(root, "sms-20250823005235.xml", smses(A, B))  # duplicate
+    write(root, "calls-20221023000904.xml", calls(call(2)))
+    write(keep, "sms-20250414013013-merged.xml", smses(D))  # another folder: must be left alone
+    out = str(root / "SMS-RecentMerge-merged")
+    trash = str(root / "SMS-RecentMerge-to-delete")
+    inputs = [str(recent), str(root) + "/*"]
+    assert M.merge(inputs, out) is True
+    assert sorted(r.get("body") for r in read(os.path.join(out, "sms-20250824005235-merged.xml"))) == ["msg A", "msg B", "msg C"]
+    assert len(read(os.path.join(out, "calls-20250601000000-merged.xml"))) == 2
+    assert M.verify_merged(inputs, out, move_sources_to=trash) is True
+    assert sorted(os.listdir(trash)) == [
+        "calls-20221023000904.xml",
+        "calls-20250601000000-merged.xml",
+        "sms-20250601000000-merged.xml",
+        "sms-20250823005235.xml",
+        "sms-20250824005235.xml",
+    ]
+    assert os.listdir(keep) == ["sms-20250414013013-merged.xml"]  # untouched
+    assert sorted(os.listdir(root)) == ["SMS-RecentMerge", "SMS-RecentMerge-merged", "SMS-RecentMerge-to-delete", "SMS-merged"]

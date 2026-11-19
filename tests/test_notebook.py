@@ -125,3 +125,51 @@ def test_step3_mentions_earlier_merged_files(tmp_path, capsys):
     assert "Your earlier merged file(s) are included too" in out
     assert "SMS-merged-previous so they are never overwritten" in out
     assert str(merged / "sms-20250414013013-merged.xml") in out
+
+
+def test_step3_loose_files_in_my_drive(tmp_path, capsys):
+    root = tmp_path / "MyDrive"
+    recent = root / "SMS-RecentMerge"
+    recent.mkdir(parents=True)
+    write(recent, "sms-20250601000000-merged.xml", smses(sms(1, "a")))
+    write(root, "sms-20250824005235.xml", smses(sms(2, "b")))
+    write(root, "calls-20221023000904.xml", calls(call(1)))
+    (root / "Other").mkdir()
+    write(root / "Other", "sms-20190101000000.xml", smses(sms(3, "c")))
+    out, ns = run(root, recent, capsys, other="%s/*" % root, with_3b=True)
+    assert ns["INPUTS"] == [str(recent), "%s/*" % root]
+    assert ns["INPUT_ARGS"]
+    lines = out.splitlines()
+    assert any(l.startswith("included") and l.rstrip().endswith("/MyDrive  (2 .xml)") for l in lines)
+    assert any(l.startswith("NOT included") and "/Other  (1 .xml)" in l for l in lines)
+
+
+def test_step3_refuses_whole_my_drive(tmp_path, capsys):
+    root = tmp_path / "MyDrive"
+    recent = root / "SMS-RecentMerge"
+    recent.mkdir(parents=True)
+    write(recent, "sms-20250601000000-merged.xml", smses(sms(1, "a")))
+    out, ns = run(root, recent, capsys, other=str(root))
+    assert "would sweep your WHOLE Drive" in out and "/content/drive/MyDrive/*" in out
+    assert ns["INPUT_ARGS"] == ""
+    out, ns = run(root, root, capsys)
+    assert "BACKUP_DIR cannot be My Drive itself" in out
+    assert ns["INPUT_ARGS"] == ""
+
+
+def test_step3b_shows_earlier_merged_results(tmp_path, capsys):
+    root = tmp_path / "MyDrive"
+    recent = root / "SMS-RecentMerge"
+    recent.mkdir(parents=True)
+    write(recent, "sms-20250601000000-merged.xml", smses(sms(1, "a")))
+    (root / "SMS-merged").mkdir()
+    write(root / "SMS-merged", "sms-20250414013013-merged.xml", smses(sms(2, "b")))
+    (root / "SMS-RecentMerge-merged").mkdir()
+    write(root / "SMS-RecentMerge-merged", "sms-20250601000000-merged.xml", smses(sms(1, "a")))
+    (root / "SMS-to-delete").mkdir()
+    write(root / "SMS-to-delete", "sms-20250101000000.xml", smses(sms(3, "c")))
+    out, _ = run(root, recent, capsys, with_3b=True)
+    lines = out.splitlines()
+    assert any(l.startswith("NOT included") and "/SMS-merged  (1 .xml)" in l and "earlier MERGED result" in l for l in lines)
+    assert any(l.startswith("included") and "/SMS-RecentMerge-merged  (1 .xml)" in l for l in lines)
+    assert any(l.startswith("to delete") and "/SMS-to-delete" in l for l in lines)

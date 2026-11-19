@@ -20,7 +20,10 @@ the link doesn't open for you, ask whoever sent you here to share it.
    drive.google.com link — and run the cells. Backups in other places (an
    older phone's folder, copies, a folder of `.zip` backups) go in
    `OTHER_FOLDERS`; optional Step 3b finds every folder in My Drive that holds
-   backups. Step 3 lists every backup that will be merged before anything runs. If the folder isn't where you said,
+   backups. Folders are searched with their subfolders; end one with `/*` to take
+   only the files directly in it — e.g. `/content/drive/MyDrive/*` for backup
+   files loose in My Drive (My Drive itself without `/*` is refused, since it
+   would sweep the whole Drive). Step 3 lists every backup that will be merged before anything runs. If the folder isn't where you said,
    the notebook searches your Drive and lists the folders that hold backups.
    It stops if the signed-in account doesn't own the folder: only the owner can
    free that storage, so pick the owner's account in **both** Google sign-in popups
@@ -165,8 +168,8 @@ Python ≥ 3.8, standard library only.
 
 ```bash
 pip install git+https://github.com/LegitUnicorn/SMS-Cleanup.git
-smscleanup merge         /path/to/SMSBackupRestore /path/to/old-phone /path/to/zips --out-dir /path/to/merged
-smscleanup verify-merged /path/to/SMSBackupRestore /path/to/old-phone /path/to/zips --out-dir /path/to/merged \
+smscleanup merge         /path/to/SMSBackupRestore /path/to/old-phone /path/to/zips '/path/to/drive/*' --out-dir /path/to/merged
+smscleanup verify-merged /path/to/SMSBackupRestore /path/to/old-phone /path/to/zips '/path/to/drive/*' --out-dir /path/to/merged \
                          --move-sources-to /path/to/to-delete   # moves only if VERIFIED
 
 # alternative flow (keep originals in place)

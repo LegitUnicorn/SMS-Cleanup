@@ -26,6 +26,15 @@ SKIP_DIR_SUFFIXES = ("-cleanup", "-merged", "-merged-previous", "-to-delete")
 Source = Tuple[str, str, str]  # (group, timestamp or "", source)
 
 
+def top_level_dir(p: str) -> Optional[str]:
+    """``"<folder>/*"`` means: only the files directly in <folder>, not its subfolders.
+    Returns that folder, or None for an ordinary input."""
+    for suffix in ("/*", os.sep + "*"):
+        if p.endswith(suffix):
+            return p[: -len(suffix)] or os.sep
+    return None
+
+
 def container(src: str) -> str:
     """The file on disk that holds this source (the .xml itself, or its .zip)."""
     return src.split(SEP, 1)[0]
@@ -68,8 +77,9 @@ def collect_inputs(
     exclude: Sequence[str] = (),
     problems: Optional[List[str]] = None,
 ) -> List[Source]:
-    """Every sms-*/calls-*.xml under ``inputs`` (folders searched recursively),
-    including ones inside .zip archives.  Newest first within each group.
+    """Every sms-*/calls-*.xml under ``inputs`` (folders searched recursively,
+    or only their top level when given as ``"<folder>/*"``), including ones
+    inside .zip archives.  Newest first within each group.
 
     Zips that can't be read, or whose backups are password-protected, are
     skipped and described in ``problems`` (if given).
@@ -133,7 +143,18 @@ def collect_inputs(
             add_zip(path)
 
     for p in inputs:
-        if os.path.isfile(p):
+        top = top_level_dir(p)
+        if top is not None:
+            # "folder/*": only the files directly in that folder, no subfolders
+            if not os.path.isdir(top):
+                raise SystemExit("input not found: %s" % top)
+            if any(os.path.realpath(top) == e for e in excl):
+                continue
+            for f in sorted(os.listdir(top)):
+                fp = os.path.join(top, f)
+                if os.path.isfile(fp):
+                    add(fp)
+        elif os.path.isfile(p):
             add(p)
         elif os.path.isdir(p):
             for d, subdirs, files in os.walk(p):
