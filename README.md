@@ -162,6 +162,36 @@ and one doesn't), *both* are kept. The tool errs on the side of keeping data.
   back. Keep the merged / `recovered` files *outside* the app's backup folder so
   its retention setting can never delete them.
 
+## Run it on your own computer (Windows + Google Drive for desktop)
+
+If Google Drive for desktop shows your Drive as a drive letter (e.g. `X:`), you
+can skip Colab and run the same steps locally.
+
+1. Install **Python 3** from [python.org/downloads](https://www.python.org/downloads/)
+   (keep "Add python.exe to PATH" ticked).
+2. Download [`windows/SMS-Cleanup.bat`](windows/SMS-Cleanup.bat) (open it on
+   GitHub, then **Download raw file**) and **double-click it**. It installs or
+   updates the tool, then asks you, step by step:
+   - the **main backup folder**, e.g. `X:\My Drive\SMS-RecentMerge`;
+   - **other folders** to include, one per line. End a folder with `\*` to take only
+     the files lying directly in it, e.g. `X:\My Drive\*` for loose backups in My
+     Drive. Type `?` to list every folder that holds backups;
+   - then it shows every backup it will read and asks before it merges, verifies, and
+     moves the verified originals into `<main folder>-to-delete`.
+3. **Wait until Google Drive for desktop has finished uploading** the merged file in
+   `<main folder>-merged` (the Drive icon in the taskbar says it's up to date). Until
+   then the only copy is on your PC. Then delete `<main folder>-to-delete` and empty the
+   Drive trash.
+
+Without the `.bat`: `py -m pip install https://github.com/LegitUnicorn/SMS-Cleanup/archive/refs/heads/main.zip`
+then `py -m smscleanup wizard`.
+
+Good to know: in its default "stream files" mode, Drive for desktop downloads files into
+its cache on your PC as they are read, and the merged file is first built in your temp
+folder, so keep free disk space on C: of a few times the size of your largest backup (the
+guided run shows an estimate). Avoid "mirror files" mode for this: it keeps a full local
+copy of everything.
+
 ## Running it elsewhere
 
 Python ≥ 3.8, standard library only.

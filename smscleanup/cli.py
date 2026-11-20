@@ -82,6 +82,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="only if VERIFIED: move all source backups into this folder, so you can delete one folder",
     )
 
+    sub.add_parser(
+        "wizard",
+        help="guided run on your own computer (e.g. Windows + Google Drive for desktop): asks for the folders, "
+        "then merges, verifies and gathers the originals to delete",
+    )
+
     i = sub.add_parser("inspect", help="print counts/date range for one backup file")
     i.add_argument("file")
 
@@ -90,6 +96,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.cmd == "inspect":
         cleanup.inspect(args.file)
         return 0
+    if args.cmd == "wizard":
+        from .wizard import wizard
+
+        try:
+            return wizard()
+        except (KeyboardInterrupt, EOFError):
+            print("\nStopped.")
+            return 1
     if args.cmd == "merge":
         from .merge import merge
 
