@@ -9,9 +9,9 @@ deleted from the phone and now only exist in an old backup.
 ## TL;DR for each affected person
 
 **Step-by-step guide:** [SMS Backup Cleanup — Teammate Guide](https://claude.ai/artifact/4Y8jupWwtsbEA42ukvKK2o)
-(what you need, every notebook step and what it should show, and what to do
-if something looks wrong). It opens for people it has been shared with; if
-the link doesn't open for you, ask whoever sent you here to share it.
+(what you need, every step in Colab **or on a Windows PC** and what it should
+show, and what to do if something looks wrong). It opens for people it has been
+shared with; if the link doesn't open for you, ask whoever sent you here to share it.
 
 1. Open [`notebooks/SMS_Cleanup_Colab.ipynb`](notebooks/SMS_Cleanup_Colab.ipynb)
    in Google Colab (*File → Open notebook → GitHub*), signed in to **the Google
@@ -165,7 +165,9 @@ and one doesn't), *both* are kept. The tool errs on the side of keeping data.
 ## Run it on your own computer (Windows + Google Drive for desktop)
 
 If Google Drive for desktop shows your Drive as a drive letter (e.g. `X:`), you
-can skip Colab and run the same steps locally.
+can skip Colab and run the same steps locally. The
+[teammate guide](https://claude.ai/artifact/4Y8jupWwtsbEA42ukvKK2o) walks through this
+too, in its "Or on a Windows PC" section.
 
 1. Install **Python 3** from [python.org/downloads](https://www.python.org/downloads/)
    (keep "Add python.exe to PATH" ticked).
